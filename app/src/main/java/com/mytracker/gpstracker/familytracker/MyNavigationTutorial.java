@@ -48,6 +48,7 @@ import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -112,6 +113,8 @@ public class MyNavigationTutorial extends AppCompatActivity
     boolean first;
     HashMap<String, String> contacts;
 
+    FusedLocationProviderClient fusedLocationProviderClient;
+
 //    InterstitialAd interstitialAd;
 
     Toolbar toolbar;
@@ -138,6 +141,8 @@ public class MyNavigationTutorial extends AppCompatActivity
         }
 
         if (BuildConfig.DEBUG) Timber.plant(new Timber.DebugTree());
+
+        fusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this);
 
         Dialogs dialogs = new Dialogs();
         Timber.d("actioon: %s", getIntent().getAction());
@@ -332,39 +337,56 @@ public class MyNavigationTutorial extends AppCompatActivity
     private void getLocation() {
         Timber.d("getLocation");
         LocationManager locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+//        if (locationManager != null) {
+//            // if gps not enabled, ask to open it
+//            if (!checkForGPS(locationManager)) askForGPS();
+//
+//            // listen for location changes and update the node in firebase
+//            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 60000L, 0f, new LocationListener() {
+//                @Override
+//                public void onLocationChanged(Location location) {
+//                    Timber.d(String.valueOf(location.getLatitude()));
+//                    if (mMap != null) {
+//                        setMapOptions(location);
+//
+//                        profileRef.child(REF_LOCATION).setValue(location.getLatitude() + ", " + location.getLongitude());
+//                    }
+//                }
+//
+//                @Override
+//                public void onStatusChanged(String s, int i, Bundle bundle) {
+//                    Timber.d("OnStatus: %s", s);
+//                }
+//
+//                @Override
+//                public void onProviderEnabled(String s) {
+//                    Timber.d("OnProviderEnabled: %s", s);
+//                }
+//
+//                @Override
+//                public void onProviderDisabled(String s) {
+//                    Timber.d("OnProviderDisabled: %s", s);
+//                }
+//            });
+//        }
+
         if (locationManager != null) {
-            // if gps not enabled, ask to open it
             if (!checkForGPS(locationManager)) askForGPS();
-
-            // listen for location changes and update the node in firebase
-            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 60000L, 0f, new LocationListener() {
-                @Override
-                public void onLocationChanged(Location location) {
-                    Timber.d(String.valueOf(location.getLatitude()));
-                    if (mMap != null) {
+        }
+        Task<Location> locationTask = fusedLocationProviderClient.getLastLocation();
+        locationTask.addOnCompleteListener(this, new OnCompleteListener<Location>() {
+            @Override
+            public void onComplete(@NonNull Task<Location> task) {
+                if (task.isSuccessful()) {
+                    Location location = task.getResult();
+                    if (mMap != null && location != null) {
+                        Timber.d(String.valueOf(location.getLatitude()));
                         setMapOptions(location);
-
                         profileRef.child(REF_LOCATION).setValue(location.getLatitude() + ", " + location.getLongitude());
                     }
                 }
-
-                @Override
-                public void onStatusChanged(String s, int i, Bundle bundle) {
-                    Timber.d("OnStatus: %s", s);
-                }
-
-                @Override
-                public void onProviderEnabled(String s) {
-                    Timber.d("OnProviderEnabled: %s", s);
-                }
-
-                @Override
-                public void onProviderDisabled(String s) {
-                    Timber.d("OnProviderDisabled: %s", s);
-                }
-            });
-        }
-
+            }
+        });
     }
 
     @SuppressLint("MissingPermission")
