@@ -2,8 +2,6 @@ package com.mytracker.gpstracker.familytracker;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.app.ActivityManager;
-import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -27,14 +25,15 @@ import androidx.core.content.ContextCompat;
 
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 
 
-import android.view.Menu;
-import android.view.MenuItem;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -59,7 +58,10 @@ import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.tasks.Continuation;
 import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 import com.google.android.material.navigation.NavigationView;
 import com.google.firebase.auth.FirebaseAuth;
@@ -71,13 +73,19 @@ import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 import com.mytracker.gpstracker.familytracker.model.repository.Contacts;
 import com.mytracker.gpstracker.familytracker.view.ContactsActivity;
 import com.mytracker.gpstracker.familytracker.view.Dialogs;
 import com.theartofdev.edmodo.cropper.CropImage;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.HashMap;
-import java.util.List;
+import java.util.zip.Inflater;
 
 import de.hdodenhof.circleimageview.CircleImageView;
 import timber.log.Timber;
@@ -91,7 +99,7 @@ import static com.mytracker.gpstracker.familytracker.model.Constants.REF_USERS;
 public class MyNavigationTutorial extends AppCompatActivity
         implements OnMapReadyCallback {
 
-    private final int LOCATION_RQ = 1000, CALL_RQ = 2000, GALLERY_RQ = 3000;
+    private final int LOCATION_RQ = 1000, CALL_RQ = 2000, GALLERY_RQ = 3000, CONTACTS_RQ = 4000;
     private String phone;
     GoogleMap mMap;
     GoogleApiClient client;
@@ -99,7 +107,6 @@ public class MyNavigationTutorial extends AppCompatActivity
     FirebaseUser user;
     DatabaseReference usersRef, profileRef, trackingRef, requestRef;
     TextView textName, textPhone;
-    Marker marker;
     CircleImageView circleImageView;
     HashMap<String, Marker> markers;
     boolean first;
@@ -108,6 +115,10 @@ public class MyNavigationTutorial extends AppCompatActivity
 //    InterstitialAd interstitialAd;
 
     Toolbar toolbar;
+
+    StorageReference storageReference;
+    DatabaseReference photoRef;
+    Marker marker;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -118,7 +129,13 @@ public class MyNavigationTutorial extends AppCompatActivity
         setSupportActionBar(toolbar);
 
         contacts = new HashMap<>();
-        contacts = new Contacts(this).getContactList();
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.READ_CONTACTS}, CONTACTS_RQ);
+        } else {
+            contacts = new Contacts(this).getContactList();
+        }
 
         if (BuildConfig.DEBUG) Timber.plant(new Timber.DebugTree());
 
@@ -151,9 +168,30 @@ public class MyNavigationTutorial extends AppCompatActivity
         markers = new HashMap<>();
         first = true;
         user = auth.getCurrentUser();
+        storageReference = FirebaseStorage.getInstance().getReference()
+                .child(user.getPhoneNumber());
 
         textPhone.setText(user.getPhoneNumber());
         textName.setText(user.getDisplayName());
+
+        // Firebase nodes
+        usersRef = FirebaseDatabase.getInstance().getReference().child(REF_USERS);
+        profileRef = usersRef.child(user.getPhoneNumber()).child(REF_PROFILE);
+        trackingRef = usersRef.child(user.getPhoneNumber()).child(REF_TRACKING);
+        photoRef = usersRef.child(user.getPhoneNumber()).child(REF_PROFILE).child(REF_PHOTO);
+        photoRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+                String url = String.valueOf(dataSnapshot.getValue());
+                Glide.with(getApplicationContext())
+                        .asBitmap().load(url).into(circleImageView);
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError databaseError) {
+
+            }
+        });
 
         //Initialize map
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
@@ -176,10 +214,6 @@ public class MyNavigationTutorial extends AppCompatActivity
             getLocation();
         }
 
-        // Firebase nodes
-        usersRef = FirebaseDatabase.getInstance().getReference().child(REF_USERS);
-        profileRef = usersRef.child(user.getPhoneNumber()).child(REF_PROFILE);
-        trackingRef = usersRef.child(user.getPhoneNumber()).child(REF_TRACKING);
 
         //Start service for requests
         startService(new Intent(this, RequestService.class));
@@ -222,12 +256,12 @@ public class MyNavigationTutorial extends AppCompatActivity
     }
 
     private void setUserIcon(String phone, final Marker marker) {
-        usersRef.child(phone).child(REF_PROFILE)
-                .child(REF_PHOTO).addValueEventListener(new ValueEventListener() {
+        usersRef.child(phone).child(REF_PROFILE).child(REF_PHOTO)
+            .addValueEventListener(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
                 String url = String.valueOf(dataSnapshot.getValue());
-                Glide.with(MyNavigationTutorial.this).asBitmap()
+                Glide.with(getApplicationContext()).asBitmap()
                         .load(url)
                         .listener(new RequestListener<Bitmap>() {
                             @Override
@@ -240,8 +274,16 @@ public class MyNavigationTutorial extends AppCompatActivity
                             public boolean onResourceReady(Bitmap resource, Object model, Target<Bitmap> target, DataSource dataSource, boolean isFirstResource) {
                                 if(resource!=null){
                                     //  Bitmap circularBitmap = getRoundedCornerBitmap(bitmap, 150);
-                                    BitmapDescriptor icon = BitmapDescriptorFactory.fromBitmap(resource);
-                                    marker.setIcon(icon);
+                                    Bitmap bitmap = Bitmap.createScaledBitmap(resource, 100, 100, false);
+                                    final BitmapDescriptor icon = BitmapDescriptorFactory.fromBitmap(bitmap);
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (marker != null) {
+                                                marker.setIcon(icon);
+                                            }
+                                        }
+                                    });
                                 }
                                 return false;
                             }
@@ -295,7 +337,7 @@ public class MyNavigationTutorial extends AppCompatActivity
             if (!checkForGPS(locationManager)) askForGPS();
 
             // listen for location changes and update the node in firebase
-            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 60000L, 100f, new LocationListener() {
+            locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 60000L, 0f, new LocationListener() {
                 @Override
                 public void onLocationChanged(Location location) {
                     Timber.d(String.valueOf(location.getLatitude()));
@@ -327,14 +369,21 @@ public class MyNavigationTutorial extends AppCompatActivity
 
     @SuppressLint("MissingPermission")
     private void setMapOptions(Location location) {
-        if (!mMap.isMyLocationEnabled())
-            mMap.setMyLocationEnabled(true);
+
         LatLng latLng = new LatLng(location.getLatitude(), location.getLongitude());
         if (first) {
             mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
             first = false;
         }
         mMap.moveCamera(CameraUpdateFactory.zoomTo(15));
+        if (marker != null) {
+            marker.remove();
+        }
+        marker = mMap.addMarker(new MarkerOptions()
+        .position(new LatLng(location.getLatitude(), location.getLongitude())));
+        marker.setTag(user.getPhoneNumber());
+
+        setUserIcon(user.getPhoneNumber(), marker);
     }
 
     private void askForGPS() {
@@ -372,6 +421,9 @@ public class MyNavigationTutorial extends AppCompatActivity
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
+
+        if (!mMap.isMyLocationEnabled())
+            mMap.setMyLocationEnabled(true);
 
         client = new GoogleApiClient.Builder(this)
                 .addApi(LocationServices.API)
@@ -452,7 +504,7 @@ public class MyNavigationTutorial extends AppCompatActivity
         callIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             if (checkSelfPermission(Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CALL_PHONE}, 0);
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CALL_PHONE}, CALL_RQ);
                 return;
             }
         }
@@ -463,18 +515,16 @@ public class MyNavigationTutorial extends AppCompatActivity
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
 
         Timber.d("code: %s", requestCode);
-        if(requestCode==LOCATION_RQ)
-        {
-            if(grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED)
+        if(grantResults.length>0 && grantResults[0]==PackageManager.PERMISSION_GRANTED){
+            if(requestCode==LOCATION_RQ)
             {
                 Toast.makeText(getApplicationContext(),"UserLocation permission granted. Thank you.",Toast.LENGTH_SHORT).show();
                 getLocation();
-//                onConnected(null);
 
-            }
-        } else if (requestCode == CALL_RQ) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            } else if (requestCode == CALL_RQ) {
                 callPhone(phone);
+            } else if (requestCode == CONTACTS_RQ) {
+                contacts = new Contacts(this).getContactList();
             }
         }
     }
@@ -496,18 +546,56 @@ public class MyNavigationTutorial extends AppCompatActivity
             Timber.d("resultCode: %s", resultCode);
             Timber.d("result: %s", result.getUri());
             if (resultCode == RESULT_OK) {
-                Uri resultUri = result.getUri();
+                final Uri resultUri = result.getUri();
+
+                Bitmap bitmap = null;
+                try {
+                    bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), resultUri);
+                    bitmap = Bitmap.createScaledBitmap(bitmap, 100, 100, false);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                if (bitmap != null) {
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos);
+                }
+                byte[] bytes = baos.toByteArray();
+                UploadTask uploadTask = storageReference.putBytes(bytes);
 
                 circleImageView.setImageURI(null);
-                circleImageView.setImageURI(resultUri);
+                circleImageView.setImageBitmap(bitmap);
+                Task<Uri> urlTask = uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+                    @Override
+                    public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                        if (!task.isSuccessful()) {
+                            throw task.getException();
+                        }
 
-                user.updateProfile(new UserProfileChangeRequest.Builder().setPhotoUri(resultUri).build());
-                FirebaseDatabase.getInstance().getReference()
-                        .child(REF_USERS)
-                        .child(user.getPhoneNumber())
-                        .child(REF_PROFILE)
-                        .child(REF_PHOTO)
-                        .setValue(resultUri);
+                        // Continue with the task to get the download URL
+                        return storageReference.getDownloadUrl();
+                    }
+                }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                    @Override
+                    public void onComplete(@NonNull Task<Uri> task) {
+                        if (task.isSuccessful()) {
+                            Uri downloadUri = task.getResult();
+                            Timber.d("urii: %s", downloadUri);
+                            Toast.makeText(MyNavigationTutorial.this, "Photo updated successfully", Toast.LENGTH_SHORT).show();
+                            FirebaseDatabase.getInstance().getReference()
+                                    .child(REF_USERS)
+                                    .child(user.getPhoneNumber())
+                                    .child(REF_PROFILE)
+                                    .child(REF_PHOTO)
+                                    .setValue(downloadUri.toString());
+                        }
+                        else {
+                            // Handle failures
+                            // ...
+                            Toast.makeText(MyNavigationTutorial.this, (CharSequence) task.getException(), Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                });
 
             } else if (resultCode == CropImage.CROP_IMAGE_ACTIVITY_RESULT_ERROR_CODE) {
                 Exception error = result.getError();
@@ -520,5 +608,22 @@ public class MyNavigationTutorial extends AppCompatActivity
     {
     	startActivity(new Intent(this, ContactsActivity.class)
         .putExtra("contacts", contacts));
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.activity_my_navigation_tutorial_drawer, menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        if (item.getItemId() == R.id.signout) {
+            if (user != null) {
+                auth.signOut();
+                finish();
+            }
+        }
+        return super.onOptionsItemSelected(item);
     }
 }

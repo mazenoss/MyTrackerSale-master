@@ -6,10 +6,7 @@ import android.os.Bundle
 import android.os.CountDownTimer
 import android.text.InputType
 import android.view.View
-import android.widget.Button
-import android.widget.EditText
-import android.widget.TextView
-import android.widget.Toast
+import android.widget.*
 import com.mytracker.gpstracker.familytracker.model.repository.Authentication
 import com.mytracker.gpstracker.familytracker.modelview.AuthModelView
 import com.google.firebase.FirebaseException
@@ -20,6 +17,7 @@ import com.google.firebase.auth.PhoneAuthProvider
 import com.mytracker.gpstracker.familytracker.BuildConfig
 import com.mytracker.gpstracker.familytracker.MyNavigationTutorial
 import com.mytracker.gpstracker.familytracker.R
+import com.mytracker.gpstracker.familytracker.model.CountryData
 import timber.log.Timber
 
 class VerificationActivity : AppCompatActivity() {
@@ -33,8 +31,12 @@ class VerificationActivity : AppCompatActivity() {
     lateinit var countDownTimer: TextView
     lateinit var code: String
     lateinit var id: String
+    lateinit var countryCode: String
 
     lateinit var auth: FirebaseAuth
+
+    lateinit var spinner: Spinner
+    lateinit var spinnerAdapter: ArrayAdapter<String>
 
     private lateinit var verifyCallback: PhoneAuthProvider.OnVerificationStateChangedCallbacks
     private lateinit var authInterface: AuthModelView.AuthInterface
@@ -44,12 +46,27 @@ class VerificationActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_verification)
 
+        spinner = findViewById(R.id.country_code)
         phoneEt = findViewById(R.id.phone_et)
         verifyBtn = findViewById(R.id.verify_btn)
         countDownTimer = findViewById(R.id.count_down)
         checkBtn = findViewById(R.id.code_btn)
 
 //        auth = FirebaseAuth.getInstance()
+
+        spinnerAdapter = ArrayAdapter(this,
+                R.layout.support_simple_spinner_dropdown_item,
+                CountryData.countryNames)
+        spinner.adapter = spinnerAdapter
+        spinner.onItemSelectedListener = object :AdapterView.OnItemSelectedListener{
+            override fun onNothingSelected(p0: AdapterView<*>?) {
+            }
+
+            override fun onItemSelected(p0: AdapterView<*>?, p1: View?, p2: Int, p3: Long) {
+                countryCode = CountryData.countryAreaCodes[p2]
+            }
+        }
+        spinner.setSelection(0)
 
         code = ""
         if (BuildConfig.DEBUG) {
@@ -133,7 +150,9 @@ class VerificationActivity : AppCompatActivity() {
         }
     }
     private fun verifyPhone() {
-        authentication.verify(phoneEt.text.toString())
+        val phone = "+" + countryCode + phoneEt.text.toString()
+        Timber.d("phoone: %s", phone)
+        authentication.verify(phone)
         updateUI(true)
     }
 

@@ -21,7 +21,7 @@
     <string name="login_register">Login/Register</string>
 
         <string name="google_maps_key" templateMergeStrategy="preserve" translatable="false">
-
+        AIzaSyAcOKrts7j8FLPDdt8USVeluA6A2FK3zr4
         </string>
 
 </resources>

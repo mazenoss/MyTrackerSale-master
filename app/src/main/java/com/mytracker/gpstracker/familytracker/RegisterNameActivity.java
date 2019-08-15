@@ -13,14 +13,22 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 
+import com.google.android.gms.tasks.Continuation;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.UserProfileChangeRequest;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 import com.theartofdev.edmodo.cropper.CropImage;
 
 import java.util.Date;
@@ -40,10 +48,7 @@ public class RegisterNameActivity extends AppCompatActivity {
     EditText nameEt;
     CircleImageView circleImageView;
     Button nxtBtn;
-    String email,password;
-
-    Uri resultUri;
-
+    StorageReference storageReference;
     FirebaseUser user;
 
 
@@ -61,6 +66,7 @@ public class RegisterNameActivity extends AppCompatActivity {
         nxtBtn = (Button)findViewById(R.id.nxt_button);
 
         user = FirebaseAuth.getInstance().getCurrentUser();
+        storageReference = FirebaseStorage.getInstance().getReference().child(user.getPhoneNumber());
         if (user == null) {
             finish();
         }
@@ -129,15 +135,13 @@ public class RegisterNameActivity extends AppCompatActivity {
 
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-
-        Timber.d("request: %s", requestCode);
 
         if(requestCode == 12 && resultCode==RESULT_OK && data!=null)
         {
-                Uri uri = data.getData();
-                CropImage.activity(uri)
+            Uri uri = data.getData();
+            CropImage.activity(uri)
                     .start(this);
         }
 
@@ -147,17 +151,44 @@ public class RegisterNameActivity extends AppCompatActivity {
             Timber.d("resultCode: %s", resultCode);
             Timber.d("result: %s", result.getUri());
             if (resultCode == RESULT_OK) {
-                 resultUri = result.getUri();
+                final Uri resultUri = result.getUri();
 
-                circleImageView.setImageURI(resultUri);
 
                 user.updateProfile(new UserProfileChangeRequest.Builder().setPhotoUri(resultUri).build());
-                FirebaseDatabase.getInstance().getReference()
-                        .child(REF_USERS)
-                        .child(user.getPhoneNumber())
-                        .child(REF_PROFILE)
-                        .child(REF_PHOTO)
-                        .setValue(resultUri);
+
+                UploadTask uploadTask = storageReference.putFile(resultUri);
+
+                Task<Uri> urlTask = uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+                    @Override
+                    public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                        if (!task.isSuccessful()) {
+                            throw task.getException();
+                        }
+
+                        // Continue with the task to get the download URL
+                        return storageReference.getDownloadUrl();
+                    }
+                }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                    @Override
+                    public void onComplete(@NonNull Task<Uri> task) {
+                        if (task.isSuccessful()) {
+                            Uri downloadUri = task.getResult();
+                            Timber.d("urii: %s", downloadUri);
+                            Toast.makeText(RegisterNameActivity.this, "Photo updated successfully", Toast.LENGTH_SHORT).show();
+                            circleImageView.setImageURI(null);
+                            circleImageView.setImageURI(resultUri);
+                            FirebaseDatabase.getInstance().getReference()
+                                    .child(REF_USERS)
+                                    .child(user.getPhoneNumber())
+                                    .child(REF_PROFILE)
+                                    .child(REF_PHOTO)
+                                    .setValue(downloadUri.toString());
+                        } else {
+                            // Handle failures
+                            // ...
+                        }
+                    }
+                });
 
             } else if (resultCode == CropImage.CROP_IMAGE_ACTIVITY_RESULT_ERROR_CODE) {
                 Exception error = result.getError();
